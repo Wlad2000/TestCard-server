@@ -2,6 +2,7 @@ const http = require('http');
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const socketIo = require('socket.io');
+const bcrypt = require('bcrypt');
 const cors = require('cors');
 
 
@@ -28,6 +29,19 @@ db.serialize(() => {
       weight INTEGER
     )
   `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login TEXT NOT NULL,
+      password TEXT NOT NULL,
+      name TEXT NOT NULL,
+      surname TEXT NOT NULL,
+      accessLevel INTEGER,
+      email TEXT NOT NULL,
+      dateCreate DATETIME,
+      icon TEXT
+    )
+  `);
 });
 
     
@@ -46,6 +60,101 @@ io.on('connection', (socket) => {
     console.log(`Message: ${data}`);
   });
 
+
+  socket.on('login', async ({ login, password }) => {
+    try {
+      const user = await getUserByLogin(login);
+
+      if (!user) {
+        socket.emit('loginError', 'Користувача не знайдено');
+        return;
+      }
+
+      if (await bcrypt.compare(password, user.password)) {
+        socket.emit('loginSuccess', user);
+      } else {
+        socket.emit('loginError', 'Невірний пароль');
+      }
+    } catch (error) {
+      console.error(error);
+      socket.emit('loginError', 'Помилка авторизації');
+    }
+  });
+
+  socket.on('register', async (userData) => {
+    try {
+      const existingUser = await getUserByLogin(userData.login);
+
+      if (existingUser) {
+        socket.emit('registerError', 'Користувач з таким логіном вже існує');
+        return;
+      }
+
+      const hashedPassword = await bcrypt.hash(userData.password, 10);
+      const newUser = { ...userData, password: hashedPassword };
+
+      db.run(
+        'INSERT INTO users (login, password, name, surname, accessLevel, email, dateCreate, icon) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          newUser.login,
+          newUser.password,
+          newUser.name,
+          newUser.surname,
+          newUser.accessLevel || 0,
+          newUser.email,
+          new Date().toISOString(),
+          newUser.icon || '',
+        ],
+        function (err) {
+          if (err) {
+            console.error(err.message);
+            socket.emit('registerError', 'Помилка реєстрації');
+          } else {
+            newUser.id = this.lastID;
+            socket.emit('registerSuccess', newUser);
+          }
+        }
+      );
+    } catch (error) {
+      console.error(error);
+      socket.emit('registerError', 'Помилка реєстрації');
+    }
+  });
+
+  socket.on('get_users', () => {
+    db.all('SELECT * FROM users', (err, rows) => {
+      if (err) {
+        console.error(err);
+        return;
+      }
+      
+      socket.emit('users_data', rows);
+    });
+  });
+  socket.on('edit-user', (data) => {
+    const { id, updates } = data;
+  
+    const updateFields = Object.keys(updates).map((key) => `${key} = ?`).join(', ');
+  
+    const stmt = db.prepare(`
+      UPDATE users
+      SET ${updateFields}
+      WHERE id = ?
+    `);
+  
+    const values = [...Object.values(updates), id];
+  
+    stmt.run(...values);
+    stmt.finalize();
+  });
+  socket.on('delete-user', (id) => {
+    db.run('DELETE FROM users WHERE id = ?', [id], (err) => {
+      if (err) {
+        console.error(err);
+        return;
+      }
+    });
+});
 
   socket.on('get_listnames', () => {
     db.all('SELECT * FROM recipe', (err, rows) => {
@@ -110,7 +219,7 @@ io.on('connection', (socket) => {
 
 
 socket.on('edit-listname', (data) => {
-  const { idrecipe, updates } = data;
+  const { id, updates } = data;
 
   const updateFields = Object.keys(updates).map((key) => `${key} = ?`).join(', ');
 
@@ -120,7 +229,7 @@ socket.on('edit-listname', (data) => {
     WHERE idrecipe = ?
   `);
 
-  const values = [...Object.values(updates), idrecipe];
+  const values = [...Object.values(updates), id];
 
   stmt.run(...values);
   stmt.finalize();
@@ -148,6 +257,19 @@ socket.on('edit-listname', (data) => {
     console.log('Client disconnect');
   });
 });
+
+
+function getUserByLogin(login) {
+  return new Promise((resolve, reject) => {
+    db.get('SELECT * FROM users WHERE login = ?', [login], (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(row);
+      }
+    });
+  });
+}
 
 const PORT = process.env.PORT || 3001;
 
