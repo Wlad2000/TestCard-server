@@ -4,6 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const socketIo = require('socket.io');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
+const geoip = require('geoip-lite');
 
 
 const app = express();
@@ -57,8 +58,20 @@ io.on('connection', (socket) => {
   console.log('connected client');
 
   socket.on('message', (data) => {
-    console.log(`Message: ${data}`);
+    console.log(`Mess ${data}`);
   });
+  
+  const ip = socket.request.headers['x-forwarded-for'] || socket.request.connection.remoteAddress;
+
+  const geo = geoip.lookup('8.8.8.8'); //IP
+  let country;
+  if (geo && geo.country) {
+    country = geo.country;
+  } else {
+    country = 'Unknown';
+  }
+
+  socket.emit('country', { country });
 
 
   socket.on('login', async ({ login, password }) => {
