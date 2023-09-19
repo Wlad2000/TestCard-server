@@ -5,6 +5,9 @@ const socketIo = require('socket.io');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const geoip = require('geoip-lite');
+const fs = require('fs');
+const path = require('path');
+
 
 
 const app = express();
@@ -54,16 +57,81 @@ const io =  socketIo(server, {
 });
 
 
+const uploadDir = path.join(__dirname, 'uploads');
+
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
+
 io.on('connection', (socket) => {
   console.log('connected client');
 
+
+  socket.on('uploadImage', ({ filename, base64data, userId}) => {
+    const filePath = path.join(uploadDir, filename);
+    const imageBuffer = Buffer.from(base64data, 'base64');
+
+    fs.writeFile(filePath, imageBuffer, (err) => {
+      if (err) {
+        console.error(err.message);
+        socket.emit('uploadError', { error: 'Помилка при завантаженні зображення' });
+      } else {
+        socket.emit('uploadSuccess', { message: 'Зображення успішно завантажено' });
+       
+        const iconFilename = filename;
+
+        db.run('UPDATE users SET icon = ? WHERE id = ?', [iconFilename, userId], (dbErr) => {
+          if (dbErr) {
+            console.error(dbErr.message);
+            socket.emit('uploadError', { error: 'Помилка при оновленні зображення користувача' });
+          } else {
+            socket.emit('updateIcon', { icon: iconFilename });
+          }
+        });
+      }
+    });
+  });
+
+  socket.on('requestImage', (data) => {
+    const userId = data
+
+    db.get('SELECT icon FROM users WHERE id = ?', [userId], (dbErr, row) => {
+      if (dbErr) {
+        console.error(dbErr.message);
+        socket.emit('imageError', { error: 'Помилка при отриманні зображення користувача' });
+      } else {
+        if (!row || !row.icon) {
+          socket.emit('imageError', { error: 'Зображення користувача не знайдено' });
+        } else {
+
+          const filename = row.icon;
+    const imagePath = path.join(uploadDir, filename);
+  
+    fs.readFile(imagePath, (err, data) => {
+      if (err) {
+        console.error(err.message);
+        socket.emit('imageError', { error: 'Помилка при отриманні зображення' });
+      } else {
+        const base64data = data.toString('base64');
+        socket.emit('imageData', { filename, base64data });
+      }
+    });
+        }
+      }
+    });
+
+    
+  });
+
+
   socket.on('message', (data) => {
-    console.log(`Mess ${data}`);
+    console.log(`message: ${data}`);
   });
   
   const ip = socket.request.headers['x-forwarded-for'] || socket.request.connection.remoteAddress;
 
-  const geo = geoip.lookup('8.8.8.8'); //IP
+  const geo = geoip.lookup('185.19.6.123'); //IP
   let country;
   if (geo && geo.country) {
     country = geo.country;
