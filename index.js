@@ -7,7 +7,7 @@ const cors = require('cors');
 const geoip = require('geoip-lite');
 const fs = require('fs');
 const path = require('path');
-
+const PDFDocument = require('pdfkit');
 
 
 const app = express();
@@ -67,6 +67,7 @@ if (!fs.existsSync(uploadDir)) {
 io.on('connection', (socket) => {
   console.log('connected client');
 
+  
 
   socket.on('uploadImage', ({ filename, base64data, userId}) => {
     const filePath = path.join(uploadDir, filename);
@@ -120,8 +121,6 @@ io.on('connection', (socket) => {
         }
       }
     });
-
-    
   });
 
 
@@ -331,6 +330,39 @@ socket.on('edit-listname', (data) => {
     console.log(`Current user set for socket ${socket.id}:`, user);
 
     io.emit('setCurrentUser', user);
+  });
+
+
+  socket.on('getUserDataPDF', (userId) => {
+    db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
+      if (err) {
+        console.error(err.message);
+        return;
+      }
+
+      const pdf = new PDFDocument();
+      const pdfStream = fs.createWriteStream(`user_${userId}.pdf`);
+      pdf.pipe(pdfStream);
+
+      pdf.image(`./uploads/${row.icon}`, {
+        fit: [150, 200],
+        align: 'center'
+      });
+      pdf.text(`Name: ${row.name}`);
+      pdf.text(`Login: ${row.login}`);
+      pdf.text(`Email: ${row.email}`);
+      pdf.text(`Surname: ${row.surname}`);
+      pdf.end();
+      
+      pdfStream.on('finish', () => {
+        const pdfBuffer = fs.readFileSync(`user_${userId}.pdf`);
+        socket.emit('pdfGenerated', pdfBuffer);
+
+        // del PDF 
+        fs.unlinkSync(`user_${userId}.pdf`);
+      });
+
+    });
   });
 
 
