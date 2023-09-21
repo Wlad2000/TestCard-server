@@ -46,6 +46,7 @@ db.serialize(() => {
       icon TEXT
     )
   `);
+  db.run('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, text TEXT, user TEXT)');
 });
 
     
@@ -63,12 +64,45 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
+const predefinedResponses = [
+  { keywords: ['привіт', 'доброго дня','hi','hello'], response: 'Привіт! Я готовий допомогти вам.' },
+  { keywords: ['ціна', 'вартість','value'], response: 'Ціна залежить від вашого запиту. Будь ласка, надайте більше інформації.' },
+  { keywords: ['допомога', 'підтримка','support','help'], response: 'Звісно, я готовий надати вам допомогу. Як я можу вам допомогти?' },
+];
+
+function findResponse(message) {
+  for (const predefinedResponse of predefinedResponses) {
+    for (const keyword of predefinedResponse.keywords) {
+      if (message.toLowerCase().includes(keyword)) {
+        return predefinedResponse.response;
+      }
+    }
+  }
+  return null; 
+}
 
 io.on('connection', (socket) => {
   console.log('connected client');
 
-  
+//ActionChat
+  socket.on('clientMessage', (message) => {
+    const clientMessage = message.text;
+    const autoResponse = findResponse(clientMessage);
 
+    if (autoResponse) {
+      io.emit('clientMessage', { text: autoResponse, user: 'auto' });
+    } else {
+      db.run('INSERT INTO messages (text, user) VALUES (?, ?)', [clientMessage, message.user], (err) => {
+        if (err) {
+          console.error('Error: ', err);
+        } else {
+          io.emit('clientMessage', { text: 'no answers', user: 'auto' });
+        }
+      });
+    }
+  });
+
+  //ActionPdf
   socket.on('uploadImage', ({ filename, base64data, userId}) => {
     const filePath = path.join(uploadDir, filename);
     const imageBuffer = Buffer.from(base64data, 'base64');
@@ -93,7 +127,7 @@ io.on('connection', (socket) => {
       }
     });
   });
-
+    //ActionImage
   socket.on('requestImage', (data) => {
     const userId = data
 
@@ -127,7 +161,7 @@ io.on('connection', (socket) => {
   socket.on('message', (data) => {
     console.log(`message: ${data}`);
   });
-  
+    //ActionCountry
   const ip = socket.request.headers['x-forwarded-for'] || socket.request.connection.remoteAddress;
 
   const geo = geoip.lookup('185.19.6.123'); //IP
@@ -140,7 +174,7 @@ io.on('connection', (socket) => {
 
   socket.emit('country', { country });
 
-
+  //ActionAuth
   socket.on('login', async ({ login, password }) => {
     try {
       const user = await getUserByLogin(login);
@@ -200,7 +234,7 @@ io.on('connection', (socket) => {
       socket.emit('registerError', 'Помилка реєстрації');
     }
   });
-
+    //ActionUsers
   socket.on('get_users', () => {
     db.all('SELECT * FROM users', (err, rows) => {
       if (err) {
@@ -235,7 +269,7 @@ io.on('connection', (socket) => {
       }
     });
 });
-
+  //ActionItems
   socket.on('get_listnames', () => {
     db.all('SELECT * FROM recipe', (err, rows) => {
       if (err) {
